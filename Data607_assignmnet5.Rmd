@@ -1,0 +1,177 @@
+---
+title: "DATA607_assignment5"
+author: "aw"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(dplyr)
+library(DBI)
+library(RMySQL)
+library(ggplot2)
+```
+
+## Overview
+
+This report demonstrates how to clean messy data on airline flight delays, and perform analysis to compare the number of delayed flights for two airlines across different cities. The analysis also includes visualizations that highlight delays by city and airline.
+
+Below, I provide two different ways of importing the data into your R studio (MySQL or CVS). Once the data has been imported, we'll clean the data using \*\*tidyverse\*\* functions, and perform transformations to reshape the dataset for analysis. The goal is to summarize and compare the delays for each airline across multiple cities and produce visualizations that aid in understanding the trends.
+
+## MySQL Database
+
+You can download the necessary MySQL script \<[https://raw.githubusercontent.com/awrubes/Assignment_5/main/flights_database.sql](https://raw.githubusercontent.com/awrubes/Assignment_5/refs/heads/main/flights_database.sql){.uri}\> in order to create the necessary table in your database, called "tidy". If you wish to name the database something else, go for it, though make sure to change the r code accordingly.
+
+```{r mysql}
+
+user_name <- user_name <- Sys.getenv("MYSQL_USER", "default_user")
+pass_word <- Sys.getenv("MYSQL_PASS", "default_password")
+
+conn <- dbConnect(RMySQL::MySQL(), dbname = "tidy", host = "localhost", user = user_name, password = pass_word)
+
+dbListTables(conn)
+
+df <- dbReadTable(conn, "messy")
+
+head(df)
+```
+
+## CSV Import
+
+If you don't care to create a MySQL database, you can go ahead and import the following CSV file.
+
+```{r csv_import}
+
+#alternatively read in the CSV file
+df_csv <- read_csv("https://raw.githubusercontent.com/awrubes/Assignment_5/main/mess_data.csv")
+
+head(df_csv)
+
+```
+
+## Data Cleaning
+
+For the rest of the code, we will be using the df_csv variable. If you decided to create a MySQL database, you will need to switch out the database names.
+
+The data imported contains some messy rows that need to be removed. Specifically, there are rows with missing values that we filter out. Additionally, the first column contains the airline names in some rows but is `NA` in others. We clean this by filling the missing airline names using the `mutate()` and `ifelse()` functions.
+
+```{r cleaning}
+
+#get rid of empty row
+df_csv_clean <- df_csv %>%
+  filter(rowSums(is.na(.)) != ncol(.))
+
+head(df_csv_clean)
+
+colnames(df_csv_clean)
+
+first_col <- colnames(df_csv_clean)[1]
+first_col
+
+#add airline name
+df_csv_clean <- df_csv_clean %>%
+  mutate(
+    airline = ifelse(is.na(!!sym(first_col)), lag(!!sym(first_col)), !!sym(first_col))
+  )%>%
+  select(-first_col)
+
+head(df_csv_clean)
+
+```
+
+## Pivoting Data
+
+Now with the cleaner data, we can pivot it from wide to a long format, where each row represents a flight status and its corresponding city and airline.
+
+```{r pivot}
+
+#pivot to long format
+df_csv_clean <-df_csv_clean %>%
+  pivot_longer(
+    cols = "Los_Angeles":"Seattle",
+    names_to = "city",
+    values_to = "flight_count"
+  )
+
+#rename first column
+new_first_col <- colnames(df_csv_clean)[1]
+
+df_csv_clean <- df_csv_clean %>%
+  rename(status = all_of(new_first_col))
+
+head(df_csv_clean)
+```
+
+## Further Analysis
+
+For better and easier analysis, it makes sense to reformat the table slightly back into a wider format where "on time" and "delayed" statuses are separated into their own columns.
+
+```{r wide}
+
+#create a wide table with on-time and delayed columns for added analysis
+df_csv_clean_wide <- df_csv_clean %>%
+  pivot_wider(names_from = status, values_from = flight_count, names_prefix = "total_")
+
+head(df_csv_clean_wide)
+```
+
+## Summarizing the Data
+
+To understand the delay patterns, we summarize the total number of flights (both on time and delayed) by airline. Additionally, we break down the delayed flights by city to see where delays are more frequent.
+
+```{r summary}
+
+# Group data by airline and status (on time vs delayed)
+summary_by_status <- df_csv_clean %>%
+  group_by(airline, status) %>%
+  summarize(total_flights = sum(flight_count, na.rm = TRUE)) %>%
+  ungroup()
+
+# View the summary
+print(summary_by_status)
+
+# Group by airline and city to compare delays in each city
+delays_by_city <- df_csv_clean %>%
+  filter(status == "delayed") %>%
+  group_by(airline, city) %>%
+  summarize(total_delayed = sum(flight_count, na.rm = TRUE)) %>%
+  ungroup()
+
+# View the delays by city
+print(delays_by_city)
+```
+
+## Visualizing Delays by City and Airline
+
+Finally, we visualize the delays using bar charts to compare the total number of delayed flights by city for each airline. The first plot shows the data with each airline's delays side by side for each city, and the second plot stacks the delays to show the total number of delays by city.
+
+```{r graphs}
+
+ggplot(delays_by_city, aes(x = city, y = total_delayed, fill = airline)) +
+  geom_col(position = "dodge") +
+  labs(title = "Total Delayed Flights by City and Airline", 
+       y = "Total Delayed Flights", x = "City") +
+  theme_minimal()
+
+
+ggplot(delays_by_city, aes(x = city, y = total_delayed, fill = airline)) +
+  geom_col(position = "stack") +
+  labs(title = "Total Delayed Flights by City (Stacked)", 
+       y = "Total Delayed Flights", x = "City") +
+  theme_minimal()
+
+```
+
+## Visualizing Delays by City and Airline
+
+The charts illustrate that Phoenix for AM WEST and Seattle for ALASKA account for the majority of delayed flights across the five cities. With more data, it would be worthwhile to further investigate the underlying causes of the delays in these specific cities.
+
+One possible hypothesis could be weather-related issues, but the fact that delays are predominantly experienced by a single airline in each city suggests that weather alone may not fully justify the data. If weather were the primary cause, we would likely expect delays to affect both airlines in each city more equitably.
+
+Given the data, a more plausible explanation may be airline-specific factors:
+
+-   Seattle is a known hub for ALASKA, so the high volume of flights may contribute to a higher number of delays.
+
+-   Phoenix has a significant number of delayed flights for AM WEST, which could indicate operational inefficiencies or challenges specific to that airport or airline.

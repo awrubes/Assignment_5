@@ -18,11 +18,11 @@ library(ggplot2)
 
 This report demonstrates how to clean messy data on airline flight delays, and perform analysis to compare the number of delayed flights for two airlines across different cities. The analysis also includes visualizations that highlight delays by city and airline.
 
-Below, I provide two different ways of importing the data into your R studio (MySQL or CVS). Once the data has been imported, we'll clean the data using \*\*tidyverse\*\* functions, and perform transformations to reshape the dataset for analysis. The goal is to summarize and compare the delays for each airline across multiple cities and produce visualizations that aid in understanding the trends.
+Below, I provide two different ways of importing the data into your R studio (MySQL or CSV). Once the data has been imported, we'll clean the data using \*\*tidyverse\*\* functions, and perform transformations to reshape the dataset for analysis. The goal is to summarize and compare the delays for each airline across multiple cities and produce visualizations that aid in understanding trends.
 
 ## MySQL Database
 
-You can download the necessary MySQL script \<[https://raw.githubusercontent.com/awrubes/Assignment_5/main/flights_database.sql](https://raw.githubusercontent.com/awrubes/Assignment_5/refs/heads/main/flights_database.sql){.uri}\> in order to create the necessary table in your database, called "tidy". If you wish to name the database something else, go for it, though make sure to change the r code accordingly.
+You can download the MySQL script \<[https://raw.githubusercontent.com/awrubes/Assignment_5/main/flights_database.sql](https://raw.githubusercontent.com/awrubes/Assignment_5/refs/heads/main/flights_database.sql){.uri}\> in order to create the necessary table in your database, which I've named "tidy". If you wish to name the database something else, make sure to change the r code accordingly. This method uses env variables for your MySQL user credentials.
 
 ```{r mysql}
 
@@ -51,11 +51,11 @@ head(df_csv)
 
 ```
 
-## Data Cleaning
+## Data Cleaning and Missing Values
 
-For the rest of the code, we will be using the df_csv variable. If you decided to create a MySQL database, you will need to switch out the database names.
+For the rest of the code, we will be using the df_csv variable. If you decided to create a MySQL database, you will need to switch out the database names accordingly.
 
-The data imported contains some messy rows that need to be removed. Specifically, there are rows with missing values that we filter out. Additionally, the first column contains the airline names in some rows but is `NA` in others. We clean this by filling the missing airline names using the `mutate()` and `ifelse()` functions.
+The data imported contains some messy rows that need to be removed. Specifically, there are rows with missing values that we should filter out. Additionally, the first column contains the airline names in some rows but is `NA` in others. We can clean this by filling the missing airline names using the `mutate()` and `ifelse()` functions.
 
 ```{r cleaning}
 
@@ -67,15 +67,15 @@ head(df_csv_clean)
 
 colnames(df_csv_clean)
 
+#access the first col name and store in variable
 first_col <- colnames(df_csv_clean)[1]
-first_col
 
-#add airline name
+#add airline name and remove the first column
 df_csv_clean <- df_csv_clean %>%
   mutate(
     airline = ifelse(is.na(!!sym(first_col)), lag(!!sym(first_col)), !!sym(first_col))
   )%>%
-  select(-first_col)
+  select(-all_of(first_col))
 
 head(df_csv_clean)
 
@@ -83,7 +83,7 @@ head(df_csv_clean)
 
 ## Pivoting Data
 
-Now with the cleaner data, we can pivot it from wide to a long format, where each row represents a flight status and its corresponding city and airline.
+With this cleaner representation of the data, we can pivot it from wide to a long format where each row represents a flight status and its corresponding city and airline. We also clean up the column names so that the data is easy to read and understand.
 
 ```{r pivot}
 
@@ -95,7 +95,6 @@ df_csv_clean <-df_csv_clean %>%
     values_to = "flight_count"
   )
 
-#rename first column
 new_first_col <- colnames(df_csv_clean)[1]
 
 df_csv_clean <- df_csv_clean %>%
@@ -106,22 +105,9 @@ head(df_csv_clean)
 
 ## Further Analysis
 
-For better and easier analysis, it makes sense to reformat the table slightly back into a wider format where "on time" and "delayed" statuses are separated into their own columns.
+Once the data is formatted properly, we can easily summarize the data to look at the total number of flights for each airline, both delayed and on time. However, these numbers alone don't tell us much about how the airlines are performing. So, in order to actually get more insightful data on airline performance we'll want to calculate percentages for on_time and delayed flights.
 
-```{r wide}
-
-#create a wide table with on-time and delayed columns for added analysis
-df_csv_clean_wide <- df_csv_clean %>%
-  pivot_wider(names_from = status, values_from = flight_count, names_prefix = "total_")
-
-head(df_csv_clean_wide)
-```
-
-## Summarizing the Data
-
-To understand the delay patterns, we summarize the total number of flights (both on time and delayed) by airline. Additionally, we break down the delayed flights by city to see where delays are more frequent.
-
-```{r summary}
+```{r analysis}
 
 # Group data by airline and status (on time vs delayed)
 summary_by_status <- df_csv_clean %>%
@@ -129,46 +115,100 @@ summary_by_status <- df_csv_clean %>%
   summarize(total_flights = sum(flight_count, na.rm = TRUE)) %>%
   ungroup()
 
-# View the summary
 print(summary_by_status)
+```
 
-# Group by airline and city to compare delays in each city
-delays_by_city <- df_csv_clean %>%
-  filter(status == "delayed") %>%
-  group_by(airline, city) %>%
-  summarize(total_delayed = sum(flight_count, na.rm = TRUE)) %>%
-  ungroup()
+## Summarizing the Data
 
-# View the delays by city
-print(delays_by_city)
+To understand the delay patterns, we summarize the total number of flights (both on time and delayed) by airline and look at the respective percentages for each, by airline and by city.
+
+This percentage calculation is important because it normalizes the data, making it easier to compare the performance of the two airlines, even though they operate different numbers of flights.
+
+For example:
+
+-   **ALASKA** had 13.3% of its flights delayed and 86.7% of its flights on time.
+
+-   **AM WEST** had 10.9% of its flights delayed and 89.1% on time.
+
+These percentages give us a clear understanding of each airline's overall performance in terms of delays. Even though AM WEST operates more flights overall, calculating percentages lets us make more meaningful comparisons between the two airlines.
+
+```{r summary}
+
+#store total ALASKA flights
+total_alaska <- summary_by_status %>%
+  filter(airline == "ALASKA") %>%
+  summarize(total_flights = sum(total_flights, na.rm = TRUE)) %>%
+  pull(total_flights)  # `pull()` extracts the value as a scalar
+
+#store total AM WEST flights
+total_amwest <- summary_by_status %>%
+  filter(airline == "AM WEST") %>%
+  summarize(total_flights = sum(total_flights, na.rm = TRUE)) %>%
+  pull(total_flights)  # `pull()` extracts the value as a scalar
+
+#calculate the percent of delays and on time by total number of flights per airline
+summary_by_status_percent_total <- summary_by_status %>%
+  mutate(
+    percent_of_total = case_when(
+      airline == "ALASKA" ~ (total_flights/total_alaska) * 100,
+      airline == "AM WEST" ~ (total_flights/total_amwest) * 100
+    )
+  )
+
+print(summary_by_status_percent_total)
+
+#create a wide table with on-time and delayed columns for added analysis
+df_csv_clean_wide <- df_csv_clean %>%
+  pivot_wider(names_from = status, values_from = flight_count, names_prefix = "total_")
+
+head(df_csv_clean_wide)
+
+#compare percent of delays by city
+summary_by_percent <- df_csv_clean_wide %>%
+  mutate(
+    percent_delayed = (total_delayed / (`total_on time` + total_delayed))*100
+  )
+
+print(summary_by_percent)
+
+#compare total percent delay overall for both airlines
+overall_summary <- summary_by_percent %>%
+  group_by(airline) %>%
+  summarize(
+    total_delayed = sum(total_delayed, na.rm=TRUE),
+    total_on_time = sum(`total_on time`, na.rm = TRUE),
+    overall_percent_delayed = (total_delayed / (total_delayed + total_on_time)) * 100
+)
+
+print(overall_summary)
+
 ```
 
 ## Visualizing Delays by City and Airline
 
-Finally, we visualize the delays using bar charts to compare the total number of delayed flights by city for each airline. The first plot shows the data with each airline's delays side by side for each city, and the second plot stacks the delays to show the total number of delays by city.
+The bar charts generated provide a clear, visual comparison of the percentage of delayed flights for each airline across multiple cities and in total. By presenting the data side-by-side, we can easily see which cities have the highest delay rates.
 
 ```{r graphs}
 
-ggplot(delays_by_city, aes(x = city, y = total_delayed, fill = airline)) +
-  geom_col(position = "dodge") +
-  labs(title = "Total Delayed Flights by City and Airline", 
-       y = "Total Delayed Flights", x = "City") +
+ggplot(overall_summary, aes(x = airline, y = overall_percent_delayed, fill = airline)) +
+  geom_col() +
+  labs(title = "Overall Percentage of Delayed Flights by Airline", 
+       y = "Percentage of Delayed Flights", x = "Airline") +
   theme_minimal()
 
-
-ggplot(delays_by_city, aes(x = city, y = total_delayed, fill = airline)) +
-  geom_col(position = "stack") +
-  labs(title = "Total Delayed Flights by City (Stacked)", 
-       y = "Total Delayed Flights", x = "City") +
+ggplot(summary_by_percent, aes(x = city, y = percent_delayed, fill = airline)) +
+  geom_col(position = "dodge") +
+  labs(title = "Percentage of Delayed Flights by City and Airline", 
+       y = "Percentage of Delayed Flights", x = "City") +
   theme_minimal()
 
 ```
 
-## Visualizing Delays by City and Airline
+## Conclusion
 
 The charts illustrate that Phoenix for AM WEST and Seattle for ALASKA account for the majority of delayed flights across the five cities. With more data, it would be worthwhile to further investigate the underlying causes of the delays in these specific cities.
 
-One possible hypothesis could be weather-related issues, but the fact that delays are predominantly experienced by a single airline in each city suggests that weather alone may not fully justify the data. If weather were the primary cause, we would likely expect delays to affect both airlines in each city more equitably.
+One possible hypothesis could be weather-related issues, but the fact that delays are predominantly experienced by a single airline in each city suggests that weather alone may not be a sufficient explanation. If weather were the primary cause, we would likely expect delays to affect both airlines in each city more equitably.
 
 Given the data, a more plausible explanation may be airline-specific factors:
 
